@@ -6,6 +6,7 @@ import {
   getShipmentWithLiveLocation,
   assignDriverToShipment,
   updateShipmentStatus,
+  updatePackageStatus,
 } from "../models/shipmentsModel.js";
 
 const router = express.Router();
@@ -100,11 +101,102 @@ router.patch("/:id/status", async (req, res) => {
   try {
     const updated = await updateShipmentStatus(req.params.id, req.body.status);
     const io = req.app.get("io");
+
+    // Emit WebSocket event with correct format for mobile app
+    const wsPayload = {
+      shipmentId: updated.id,
+      status: updated.status,
+      shipment: updated,
+      timestamp: new Date().toISOString()
+    };
+
+    console.log('📦 [SYNC] ===== SHIPMENT STATUS UPDATE EMITTED =====');
+    console.log('📦 [SYNC] Shipment ID:', updated.id);
+    console.log('📦 [SYNC] New Status:', updated.status);
+    console.log('📦 [SYNC] Broadcasting to notification-room');
+
+    io.to('notification-room').emit('shipment_status_updated', wsPayload);
+    // Also broadcast globally for backward compatibility
     io.emit("shipment_updated", { id: updated.id, status: updated.status });
+
+    // Send push notification asynchronously (don't block response)
+    if (updated.customer_id) {
+      import("../services/pushNotificationService.js")
+        .then(({ default: pushService }) => {
+          return pushService.sendShipmentStatusNotification(
+            updated.customer_id,
+            updated,
+            updated.status
+          );
+        })
+        .catch(err => {
+          console.error('Failed to send push notification:', err);
+        });
+    }
+
     res.json(updated);
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Failed to update shipment status" });
+  }
+});
+
+// PATCH /api/shipments/:id/package-status - update package delivery status
+router.patch("/:id/package-status", async (req, res) => {
+  try {
+    const { packageStatus } = req.body;
+
+    if (!packageStatus) {
+      return res.status(400).json({ error: "Package status is required" });
+    }
+
+    const updated = await updatePackageStatus(req.params.id, packageStatus, req.user?.id);
+    const io = req.app.get("io");
+
+    // Emit WebSocket event with correct format
+    const wsPayload = {
+      shipmentId: updated.id,
+      packageStatus: updated.package_status,
+      shipment: updated,
+      trackingNumber: updated.tracking_number,
+      timestamp: new Date().toISOString()
+    };
+
+    console.log('📦 [SYNC] ===== PACKAGE STATUS UPDATE EMITTED =====');
+    console.log('📦 [SYNC] Shipment ID:', updated.id);
+    console.log('📦 [SYNC] Package Status:', updated.package_status);
+    console.log('📦 [SYNC] Broadcasting to notification-room');
+
+    io.to('notification-room').emit('package_status_updated', wsPayload);
+    // Also broadcast globally for backward compatibility
+    io.emit("package_status_updated", {
+      id: updated.id,
+      packageStatus: updated.package_status,
+      trackingNumber: updated.tracking_number
+    });
+
+    // Send push notification asynchronously (don't block response)
+    if (updated.customer_id) {
+      import("../services/pushNotificationService.js")
+        .then(({ default: pushService }) => {
+          return pushService.sendPackageStatusNotification(
+            updated.customer_id,
+            updated,
+            updated.package_status
+          );
+        })
+        .catch(err => {
+          console.error('Failed to send push notification:', err);
+        });
+    }
+
+    res.json(updated);
+  } catch (err) {
+    console.error(err);
+    if (err.message.includes('Invalid package status')) {
+      return res.status(400).json({ error: err.message });
+    }
+    res.status(500).json({ error: "Failed to update package status" });
   }
 });
 

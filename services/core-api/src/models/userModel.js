@@ -78,8 +78,13 @@ export async function getUserOrders(userId) {
  */
 export async function getUserShipments(userId) {
   const result = await db.query(
-    `SELECT s.id, s.tracking_number, s.status,
+    `SELECT s.id, s.tracking_number, s.status, s.package_status,
             s.pickup_address, s.delivery_address,
+            s.pickup_latitude, s.pickup_longitude,
+            s.delivery_latitude, s.delivery_longitude,
+            s.sender_name, s.sender_phone,
+            s.receiver_name, s.receiver_phone,
+            s.package_weight, s.package_description, s.package_details,
             s.created_at, s.updated_at,
             o.id as order_id, o.total_amount, o.status as order_status,
             d.id as driver_id, d.name as driver_name,
@@ -100,6 +105,7 @@ export async function getUserShipments(userId) {
      JOIN customers c ON c.id = o.customer_id
      LEFT JOIN drivers d ON d.id = s.driver_id
      WHERE c.user_id = $1
+       AND s.deleted_at IS NULL
      ORDER BY s.created_at DESC`,
     [userId]
   );
@@ -111,8 +117,13 @@ export async function getUserShipments(userId) {
  */
 export async function getUserShipmentById(userId, shipmentId) {
   const result = await db.query(
-    `SELECT s.id, s.tracking_number, s.status,
+    `SELECT s.id, s.tracking_number, s.status, s.package_status,
             s.pickup_address, s.delivery_address,
+            s.pickup_latitude, s.pickup_longitude,
+            s.delivery_latitude, s.delivery_longitude,
+            s.sender_name, s.sender_phone,
+            s.receiver_name, s.receiver_phone,
+            s.package_weight, s.package_description, s.package_details,
             s.created_at, s.updated_at,
             o.id as order_id, o.customer_id,
             d.id as driver_id, d.name as driver_name,
@@ -132,7 +143,8 @@ export async function getUserShipmentById(userId, shipmentId) {
      JOIN orders o ON o.id = s.order_id
      JOIN customers c ON c.id = o.customer_id
      LEFT JOIN drivers d ON d.id = s.driver_id
-     WHERE s.id = $1 AND c.user_id = $2`,
+     WHERE s.id = $1 AND c.user_id = $2
+       AND s.deleted_at IS NULL`,
     [shipmentId, userId]
   );
 
@@ -191,12 +203,26 @@ export async function getUserStats(userId) {
  * Create a new shipment/package for the user
  * @param {number} userId - The user ID
  * @param {Object} shipmentData - Shipment details
- * @param {string} shipmentData.pickupAddress - Pickup address
- * @param {string} shipmentData.deliveryAddress - Delivery address
+ * @param {string|Object} [shipmentData.pickupAddress] - Legacy: Pickup address (string or {address, latitude, longitude})
+ * @param {string|Object} [shipmentData.deliveryAddress] - Legacy: Delivery address (string or {address, latitude, longitude})
+ * @param {Object} [shipmentData.sender] - New: Sender information {name, phone, address, latitude, longitude}
+ * @param {Object} [shipmentData.receiver] - New: Receiver information {name, phone, address, latitude, longitude}
+ * @param {Object} [shipmentData.package] - Package details {weight, description, details}
  * @param {number} [shipmentData.totalAmount] - Optional total amount
  * @returns {Promise<Object>} The created shipment with full details
  */
-export async function createUserShipment(userId, { pickupAddress, deliveryAddress, totalAmount = 0 }) {
+export async function createUserShipment(userId, shipmentData) {
+  const {
+    // Legacy format
+    pickupAddress,
+    deliveryAddress,
+    // New format
+    sender,
+    receiver,
+    package: packageData,
+    totalAmount = 0
+  } = shipmentData;
+
   // Get the customer ID for this user
   const customerResult = await db.query(
     'SELECT id FROM customers WHERE user_id = $1',
@@ -212,13 +238,50 @@ export async function createUserShipment(userId, { pickupAddress, deliveryAddres
   // Create an order for this customer
   const order = await createOrder(customerId, totalAmount);
 
-  // Create a shipment for this order (with userId for event logging)
-  const shipment = await createShipment(order.id, pickupAddress, deliveryAddress, userId);
+  // Determine format: new (sender/receiver) or legacy (pickupAddress/deliveryAddress)
+  let pickupData, deliveryData, additionalData = {};
 
-  // Return the shipment with full details
+  if (sender && receiver) {
+    // New format with sender/receiver
+    pickupData = {
+      address: sender.address,
+      latitude: sender.latitude,
+      longitude: sender.longitude
+    };
+    deliveryData = {
+      address: receiver.address,
+      latitude: receiver.latitude,
+      longitude: receiver.longitude
+    };
+    additionalData = {
+      sender: {
+        name: sender.name,
+        phone: sender.phone
+      },
+      receiver: {
+        name: receiver.name,
+        phone: receiver.phone
+      },
+      package: packageData
+    };
+  } else {
+    // Legacy format
+    pickupData = pickupAddress;
+    deliveryData = deliveryAddress;
+  }
+
+  // Create a shipment for this order (with userId for event logging)
+  const shipment = await createShipment(order.id, pickupData, deliveryData, userId, additionalData);
+
+  // Return the shipment with full details including all new fields
   const result = await db.query(
     `SELECT s.id, s.tracking_number, s.status,
             s.pickup_address, s.delivery_address,
+            s.pickup_latitude, s.pickup_longitude,
+            s.delivery_latitude, s.delivery_longitude,
+            s.sender_name, s.sender_phone,
+            s.receiver_name, s.receiver_phone,
+            s.package_weight, s.package_description, s.package_details,
             s.created_at, s.updated_at,
             o.id as order_id, o.total_amount, o.status as order_status
      FROM shipments s
@@ -228,4 +291,69 @@ export async function createUserShipment(userId, { pickupAddress, deliveryAddres
   );
 
   return result.rows[0];
+}
+
+/**
+ * Delete (soft delete) a shipment for a user
+ * Only allowed for pending or delivered shipments
+ * @param {number} userId - The user ID
+ * @param {number} shipmentId - The shipment ID to delete
+ * @returns {Promise<Object>} Result with deleted shipment info
+ * @throws {Error} If shipment not found, doesn't belong to user, or can't be deleted
+ */
+export async function deleteUserShipment(userId, shipmentId) {
+  // First, verify ownership and get shipment status
+  const shipmentResult = await db.query(
+    `SELECT s.id, s.tracking_number, s.status, s.deleted_at
+     FROM shipments s
+     JOIN orders o ON o.id = s.order_id
+     JOIN customers c ON c.id = o.customer_id
+     WHERE s.id = $1 AND c.user_id = $2`,
+    [shipmentId, userId]
+  );
+
+  if (shipmentResult.rows.length === 0) {
+    throw new Error('Shipment not found or does not belong to you');
+  }
+
+  const shipment = shipmentResult.rows[0];
+
+  // Check if already deleted
+  if (shipment.deleted_at) {
+    throw new Error('Shipment has already been deleted');
+  }
+
+  // Check if status allows deletion
+  const deletableStatuses = ['pending', 'delivered'];
+  if (!deletableStatuses.includes(shipment.status)) {
+    throw new Error(
+      `Cannot delete shipment in '${shipment.status}' status. Only ${deletableStatuses.join(' or ')} shipments can be deleted.`
+    );
+  }
+
+  // Perform soft delete
+  const deleteResult = await db.query(
+    `UPDATE shipments
+     SET deleted_at = NOW(),
+         deleted_by_user_id = $1,
+         updated_at = NOW()
+     WHERE id = $2
+     RETURNING id, tracking_number, status, deleted_at`,
+    [userId, shipmentId]
+  );
+
+  // Log deletion event
+  const { logShipmentEvent } = await import('./shipmentEventsModel.js');
+  await logShipmentEvent({
+    shipmentId,
+    eventType: 'deleted',
+    description: `Shipment deleted by customer (was ${shipment.status})`,
+    userId,
+    metadata: {
+      previous_status: shipment.status,
+      reason: 'customer_deletion'
+    }
+  });
+
+  return deleteResult.rows[0];
 }

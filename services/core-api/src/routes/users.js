@@ -7,7 +7,8 @@ import {
   getUserShipments,
   getUserShipmentById,
   getUserStats,
-  createUserShipment
+  createUserShipment,
+  deleteUserShipment
 } from '../models/userModel.js';
 import {
   getDriverIdByUserId,
@@ -112,27 +113,90 @@ router.get('/me/shipments', async (req, res) => {
 /**
  * POST /api/users/me/shipments
  * Create a new shipment/package for the logged-in customer
- * Body: { pickupAddress, deliveryAddress, totalAmount? }
+ *
+ * Supports two formats:
+ *
+ * Legacy Format:
+ * {
+ *   pickupAddress: string | { address, latitude?, longitude? },
+ *   deliveryAddress: string | { address, latitude?, longitude? },
+ *   totalAmount?: number
+ * }
+ *
+ * New Enhanced Format:
+ * {
+ *   sender: {
+ *     name: string,
+ *     phone: string,
+ *     address: string,
+ *     latitude?: number,
+ *     longitude?: number
+ *   },
+ *   receiver: {
+ *     name: string,
+ *     phone: string,
+ *     address: string,
+ *     latitude?: number,
+ *     longitude?: number
+ *   },
+ *   package: {
+ *     weight: number,           // in kg
+ *     description?: string,
+ *     details?: object         // additional metadata
+ *   },
+ *   totalAmount?: number
+ * }
+ *
  * 🔒 Customer Only
  */
 router.post('/me/shipments', requireCustomer, async (req, res) => {
   try {
-    const { pickupAddress, deliveryAddress, totalAmount } = req.body;
+    const { pickupAddress, deliveryAddress, sender, receiver, package: packageData, totalAmount } = req.body;
 
-    // Validate required fields
-    if (!pickupAddress || !deliveryAddress) {
+    // Determine which format is being used and validate
+    const isNewFormat = sender && receiver;
+    const isLegacyFormat = pickupAddress || deliveryAddress;
+
+    if (isNewFormat) {
+      // Validate new format
+      if (!sender || !sender.name || !sender.phone || !sender.address) {
+        return res.status(400).json({
+          error: 'Bad request',
+          message: 'sender.name, sender.phone, and sender.address are required'
+        });
+      }
+      if (!receiver || !receiver.name || !receiver.phone || !receiver.address) {
+        return res.status(400).json({
+          error: 'Bad request',
+          message: 'receiver.name, receiver.phone, and receiver.address are required'
+        });
+      }
+    } else if (isLegacyFormat) {
+      // Validate legacy format
+      const pickupValid = pickupAddress && (
+        typeof pickupAddress === 'string' ||
+        (typeof pickupAddress === 'object' && pickupAddress.address)
+      );
+      const deliveryValid = deliveryAddress && (
+        typeof deliveryAddress === 'string' ||
+        (typeof deliveryAddress === 'object' && deliveryAddress.address)
+      );
+
+      if (!pickupValid || !deliveryValid) {
+        return res.status(400).json({
+          error: 'Bad request',
+          message: 'pickupAddress and deliveryAddress are required'
+        });
+      }
+    } else {
       return res.status(400).json({
         error: 'Bad request',
-        message: 'pickupAddress and deliveryAddress are required'
+        message: 'Either use legacy format (pickupAddress, deliveryAddress) or new format (sender, receiver, package)'
       });
     }
 
-    // Create the shipment
-    const shipment = await createUserShipment(req.user.id, {
-      pickupAddress,
-      deliveryAddress,
-      totalAmount: totalAmount || 0
-    });
+    // Create the shipment - createUserShipment handles both formats
+    const shipment = await createUserShipment(req.user.id, req.body);
 
     res.status(201).json({
       message: 'Shipment created successfully',
@@ -318,14 +382,46 @@ router.post('/me/packages/:id/claim', requireDriver, async (req, res) => {
     // Claim the package (pass userId for event logging)
     const claimedPackage = await claimPackage(shipmentId, driverId, req.user.id);
 
-    // Emit WebSocket event
+    // Emit WebSocket events with correct format for mobile app
     const io = req.app.get('io');
     if (io) {
+      const wsPayload = {
+        shipmentId: claimedPackage.id,
+        status: claimedPackage.status,
+        shipment: claimedPackage,
+        timestamp: new Date().toISOString()
+      };
+
+      console.log('📦 [SYNC] ===== DRIVER PACKAGE CLAIM EMITTED =====');
+      console.log('📦 [SYNC] Shipment ID:', claimedPackage.id);
+      console.log('📦 [SYNC] New Status:', claimedPackage.status);
+      console.log('📦 [SYNC] Driver ID:', driverId);
+      console.log('📦 [SYNC] Broadcasting to notification-room');
+
+      // Emit shipment status update (package was assigned)
+      io.to('notification-room').emit('shipment_status_updated', wsPayload);
+
+      // Also emit specific assignment event for backward compatibility
       io.emit('shipment_assigned', {
         shipmentId: claimedPackage.id,
         driverId: driverId,
         trackingNumber: claimedPackage.tracking_number
       });
+    }
+
+    // Send push notification asynchronously (don't block response)
+    if (claimedPackage.customer_id) {
+      import('../services/pushNotificationService.js')
+        .then(({ default: pushService }) => {
+          return pushService.sendShipmentStatusNotification(
+            claimedPackage.customer_id,
+            claimedPackage,
+            claimedPackage.status
+          );
+        })
+        .catch(err => {
+          console.error('Failed to send push notification:', err);
+        });
     }
 
     res.json({
@@ -432,14 +528,44 @@ router.patch('/me/deliveries/:id/status', requireDriver, async (req, res) => {
     // Update status (pass userId for event logging)
     const updated = await updateShipmentStatus(shipmentId, status, req.user.id);
 
-    // Emit WebSocket event
+    // Emit WebSocket event with correct format for mobile app
     const io = req.app.get('io');
     if (io) {
+      const wsPayload = {
+        shipmentId: updated.id,
+        status: updated.status,
+        shipment: updated,
+        timestamp: new Date().toISOString()
+      };
+
+      console.log('📦 [SYNC] ===== DRIVER DELIVERY STATUS UPDATE EMITTED =====');
+      console.log('📦 [SYNC] Shipment ID:', updated.id);
+      console.log('📦 [SYNC] New Status:', updated.status);
+      console.log('📦 [SYNC] Updated by Driver ID:', driverId);
+      console.log('📦 [SYNC] Broadcasting to notification-room');
+
+      io.to('notification-room').emit('shipment_status_updated', wsPayload);
+      // Also broadcast globally for backward compatibility
       io.emit('shipment_updated', {
         id: updated.id,
         status: updated.status,
         trackingNumber: updated.tracking_number
       });
+    }
+
+    // Send push notification asynchronously (don't block response)
+    if (updated.customer_id) {
+      import('../services/pushNotificationService.js')
+        .then(({ default: pushService }) => {
+          return pushService.sendShipmentStatusNotification(
+            updated.customer_id,
+            updated,
+            updated.status
+          );
+        })
+        .catch(err => {
+          console.error('Failed to send push notification:', err);
+        });
     }
 
     res.json({
@@ -493,6 +619,70 @@ router.get('/me/shipments/:id/history', async (req, res) => {
   } catch (err) {
     console.error('Error fetching shipment history:', err);
     res.status(500).json({ error: 'Failed to fetch shipment history' });
+  }
+});
+
+/**
+ * DELETE /api/users/me/shipments/:id
+ * Delete a shipment (soft delete)
+ * Only allowed for pending (not assigned) or delivered shipments
+ * 🔒 Customer Only
+ */
+router.delete('/me/shipments/:id', requireCustomer, async (req, res) => {
+  try {
+    const shipmentId = parseInt(req.params.id);
+
+    if (isNaN(shipmentId)) {
+      return res.status(400).json({
+        error: 'Bad request',
+        message: 'Invalid shipment ID'
+      });
+    }
+
+    // Attempt to delete the shipment
+    const result = await deleteUserShipment(req.user.id, shipmentId);
+
+    res.status(200).json({
+      message: 'Package deleted successfully',
+      shipment_id: result.id,
+      tracking_number: result.tracking_number,
+      deleted_at: result.deleted_at
+    });
+  } catch (err) {
+    console.error('Error deleting shipment:', err);
+
+    // Handle specific error messages
+    if (err.message.includes('not found') || err.message.includes('does not belong')) {
+      return res.status(404).json({
+        error: 'Shipment not found',
+        message: err.message
+      });
+    }
+
+    if (err.message.includes('Cannot delete')) {
+      // Extract status information from error message
+      const statusMatch = err.message.match(/in '(\w+)' status/);
+      const currentStatus = statusMatch ? statusMatch[1] : 'unknown';
+
+      return res.status(403).json({
+        error: 'Cannot delete shipment',
+        message: err.message,
+        current_status: currentStatus,
+        allowed_statuses: ['pending', 'delivered']
+      });
+    }
+
+    if (err.message.includes('already been deleted')) {
+      return res.status(410).json({
+        error: 'Already deleted',
+        message: err.message
+      });
+    }
+
+    res.status(500).json({
+      error: 'Failed to delete shipment',
+      message: 'An unexpected error occurred'
+    });
   }
 });
 
@@ -566,6 +756,96 @@ router.post('/me/deliveries/:id/events', requireDriver, async (req, res) => {
   } catch (err) {
     console.error('Error logging event:', err);
     res.status(500).json({ error: 'Failed to log event' });
+  }
+});
+
+// =====================================================
+// Push Notification Endpoints
+// =====================================================
+
+/**
+ * POST /api/users/me/push-token
+ * Register push notification token for current user
+ * Body: { token: "ExponentPushToken[...]" }
+ */
+router.post('/me/push-token', async (req, res) => {
+  const { token } = req.body;
+  const userId = req.user.id;
+
+  if (!token) {
+    return res.status(400).json({
+      error: 'Token is required'
+    });
+  }
+
+  try {
+    const pushNotificationService = (await import('../services/pushNotificationService.js')).default;
+
+    // Validate token format
+    if (!pushNotificationService.isValidToken(token)) {
+      return res.status(400).json({
+        error: 'Invalid push token format'
+      });
+    }
+
+    // Determine device type from token
+    const deviceType = token.includes('ExponentPushToken')
+      ? 'expo'
+      : token.startsWith('ios:') ? 'ios' : 'android';
+
+    // Insert or update token
+    const db = (await import('../models/db.js')).default;
+    await db.query(`
+      INSERT INTO push_tokens (user_id, token, device_type, last_used_at)
+      VALUES ($1, $2, $3, NOW())
+      ON CONFLICT (user_id, token)
+      DO UPDATE SET
+        last_used_at = NOW(),
+        updated_at = NOW()
+    `, [userId, token, deviceType]);
+
+    res.json({
+      message: 'Push token registered successfully',
+      token
+    });
+  } catch (error) {
+    console.error('Error registering push token:', error);
+    res.status(500).json({
+      error: 'Failed to register push token'
+    });
+  }
+});
+
+/**
+ * DELETE /api/users/me/push-token
+ * Unregister push notification token
+ * Body: { token: "ExponentPushToken[...]" }
+ */
+router.delete('/me/push-token', async (req, res) => {
+  const { token } = req.body;
+  const userId = req.user.id;
+
+  if (!token) {
+    return res.status(400).json({
+      error: 'Token is required'
+    });
+  }
+
+  try {
+    const db = (await import('../models/db.js')).default;
+    await db.query(
+      'DELETE FROM push_tokens WHERE user_id = $1 AND token = $2',
+      [userId, token]
+    );
+
+    res.json({
+      message: 'Push token unregistered successfully'
+    });
+  } catch (error) {
+    console.error('Error unregistering push token:', error);
+    res.status(500).json({
+      error: 'Failed to unregister push token'
+    });
   }
 });
 

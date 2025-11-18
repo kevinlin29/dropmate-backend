@@ -41,7 +41,7 @@ spec:
       containers:
         - name: core-api
           # Update this with your Docker Hub or DigitalOcean Container Registry image
-          image: your-registry/dropmate-core-api:latest
+          image: registry.digitalocean.com/dropmate-1763357718/dropmate-core-api:latest
           imagePullPolicy: Always
           ports:
             - containerPort: 8080

@@ -41,7 +41,7 @@ spec:
       containers:
         - name: location-service
           # Update with your registry
-          image: your-registry/dropmate-location-service:latest
+          image: registry.digitalocean.com/dropmate-1763357718/dropmate-location-service:latest
           imagePullPolicy: Always
           ports:
             - containerPort: 8081

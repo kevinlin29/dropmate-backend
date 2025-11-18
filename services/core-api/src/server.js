@@ -34,8 +34,26 @@ const httpServer = createServer(app);
 const io = new Server(httpServer, { cors: { origin: "*" } });
 
 io.on("connection", socket => {
-  console.log("Client connected");
-  socket.on("disconnect", () => console.log("Client disconnected"));
+  console.log("Client connected", socket.id);
+
+  // Auto-join notification room for all clients
+  socket.join('notification-room');
+  console.log("Client joined notification-room", socket.id);
+
+  // Allow clients to explicitly join rooms
+  socket.on('join_room', (room) => {
+    socket.join(room);
+    console.log(`Client ${socket.id} joined room: ${room}`);
+  });
+
+  socket.on('leave_room', (room) => {
+    socket.leave(room);
+    console.log(`Client ${socket.id} left room: ${room}`);
+  });
+
+  socket.on("disconnect", () => {
+    console.log("Client disconnected", socket.id);
+  });
 });
 
 app.set("io", io);

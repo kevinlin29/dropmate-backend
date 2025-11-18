@@ -148,7 +148,19 @@ export async function getAvailablePackages(limit = 50) {
             s.tracking_number,
             s.pickup_address,
             s.delivery_address,
+            s.pickup_latitude,
+            s.pickup_longitude,
+            s.delivery_latitude,
+            s.delivery_longitude,
+            s.sender_name,
+            s.sender_phone,
+            s.receiver_name,
+            s.receiver_phone,
+            s.package_weight,
+            s.package_description,
+            s.package_details,
             s.status,
+            s.package_status,
             s.created_at,
             o.id as order_id,
             o.total_amount,
@@ -159,6 +171,7 @@ export async function getAvailablePackages(limit = 50) {
      JOIN customers c ON c.id = o.customer_id
      WHERE s.status = 'pending'
        AND s.driver_id IS NULL
+       AND s.deleted_at IS NULL
      ORDER BY s.created_at ASC
      LIMIT $1`,
     [limit]
@@ -227,7 +240,19 @@ export async function getDriverDeliveries(driverId, statusFilter = null) {
            s.tracking_number,
            s.pickup_address,
            s.delivery_address,
+           s.pickup_latitude,
+           s.pickup_longitude,
+           s.delivery_latitude,
+           s.delivery_longitude,
+           s.sender_name,
+           s.sender_phone,
+           s.receiver_name,
+           s.receiver_phone,
+           s.package_weight,
+           s.package_description,
+           s.package_details,
            s.status,
+           s.package_status,
            s.created_at,
            s.updated_at,
            o.id as order_id,
@@ -238,6 +263,7 @@ export async function getDriverDeliveries(driverId, statusFilter = null) {
     JOIN orders o ON o.id = s.order_id
     JOIN customers c ON c.id = o.customer_id
     WHERE s.driver_id = $1
+      AND s.deleted_at IS NULL
   `;
 
   const params = [driverId];

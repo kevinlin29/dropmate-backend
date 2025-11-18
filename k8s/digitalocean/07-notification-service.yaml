@@ -46,7 +46,7 @@ spec:
       containers:
         - name: notification-service
           # Update with your registry
-          image: your-registry/dropmate-notification-service:latest
+          image: registry.digitalocean.com/dropmate-1763357718/dropmate-notification-service:latest
           imagePullPolicy: Always
           ports:
             - containerPort: 8082
