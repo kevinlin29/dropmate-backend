@@ -122,15 +122,20 @@ router.patch("/:id/status", async (req, res) => {
     // Send push notification asynchronously (don't block response)
     if (updated.customer_id) {
       import("../services/pushNotificationService.js")
-        .then(({ default: pushService }) => {
-          return pushService.sendShipmentStatusNotification(
-            updated.customer_id,
-            updated,
-            updated.status
-          );
+        .then(async ({ default: pushService }) => {
+          try {
+            const result = await pushService.sendShipmentStatusNotification(
+              updated.customer_id,
+              updated,
+              updated.status
+            );
+            console.log(`[Shipments:${updated.id}] Push notification result:`, result);
+          } catch (err) {
+            console.error(`[Shipments:${updated.id}] Push notification FAILED:`, err.message);
+          }
         })
         .catch(err => {
-          console.error('Failed to send push notification:', err);
+          console.error(`[Shipments:${updated.id}] Failed to import pushNotificationService:`, err);
         });
     }
 
@@ -178,15 +183,20 @@ router.patch("/:id/package-status", async (req, res) => {
     // Send push notification asynchronously (don't block response)
     if (updated.customer_id) {
       import("../services/pushNotificationService.js")
-        .then(({ default: pushService }) => {
-          return pushService.sendPackageStatusNotification(
-            updated.customer_id,
-            updated,
-            updated.package_status
-          );
+        .then(async ({ default: pushService }) => {
+          try {
+            const result = await pushService.sendPackageStatusNotification(
+              updated.customer_id,
+              updated,
+              updated.package_status
+            );
+            console.log(`[Shipments:${updated.id}] Package push notification result:`, result);
+          } catch (err) {
+            console.error(`[Shipments:${updated.id}] Package push notification FAILED:`, err.message);
+          }
         })
         .catch(err => {
-          console.error('Failed to send push notification:', err);
+          console.error(`[Shipments:${updated.id}] Failed to import pushNotificationService:`, err);
         });
     }
 

@@ -6,17 +6,8 @@ metadata:
   namespace: dropmate
   labels:
     app: notification-service
-  annotations:
-    service.beta.kubernetes.io/do-loadbalancer-name: "dropmate-notification-lb"
-    service.beta.kubernetes.io/do-loadbalancer-protocol: "http"
-    service.beta.kubernetes.io/do-loadbalancer-healthcheck-path: "/health"
-    service.beta.kubernetes.io/do-loadbalancer-healthcheck-port: "8082"
-    # Enable session affinity for WebSocket connections
-    service.beta.kubernetes.io/do-loadbalancer-sticky-sessions-type: "cookies"
-    service.beta.kubernetes.io/do-loadbalancer-sticky-sessions-cookie-name: "dropmate_ws"
-    service.beta.kubernetes.io/do-loadbalancer-sticky-sessions-cookie-ttl: "300"
 spec:
-  type: LoadBalancer
+  type: ClusterIP
   sessionAffinity: ClientIP  # Important for WebSocket
   selector:
     app: notification-service
@@ -107,4 +98,4 @@ spec:
         name: cpu
         target:
           type: Utilization
-          averageUtilization: 70
+          averageUtilization: 90

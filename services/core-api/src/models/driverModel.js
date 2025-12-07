@@ -223,6 +223,17 @@ export async function claimPackage(shipmentId, driverId, userId = null) {
     await logDriverAssigned(shipmentId, driverId, userId, {
       assigned_at: new Date().toISOString()
     });
+
+    // Get customer_id from order for push notifications
+    if (result.rows[0].order_id) {
+      const orderResult = await db.query(
+        'SELECT customer_id FROM orders WHERE id = $1',
+        [result.rows[0].order_id]
+      );
+      if (orderResult.rows[0]) {
+        result.rows[0].customer_id = orderResult.rows[0].customer_id;
+      }
+    }
   }
 
   return result.rows[0];

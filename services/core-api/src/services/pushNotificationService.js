@@ -3,7 +3,15 @@ import db from '../models/db.js';
 
 class PushNotificationService {
   constructor() {
-    this.expo = new Expo();
+    const accessToken = process.env.EXPO_ACCESS_TOKEN;
+
+    if (!accessToken) {
+      console.warn('[PushNotificationService] WARNING: EXPO_ACCESS_TOKEN not configured. Push notifications may not work.');
+    } else {
+      console.log('[PushNotificationService] Initialized with Expo access token');
+    }
+
+    this.expo = new Expo({ accessToken });
   }
 
   /**
@@ -65,13 +73,16 @@ class PushNotificationService {
    * Send notification to a single user about shipment status
    */
   async sendShipmentStatusNotification(userId, shipment, status) {
+    const logPrefix = `[PushNotification:Shipment:${shipment.id}]`;
+    console.log(`${logPrefix} Sending to user ${userId}, status: ${status}`);
+
     try {
       // Get user's push tokens from database
       const tokens = await this.getUserPushTokens(userId);
 
       if (tokens.length === 0) {
-        console.log(`No push tokens found for user ${userId}`);
-        return;
+        console.log(`${logPrefix} No push tokens found for user ${userId}`);
+        return { success: true, sent: 0, reason: 'no_tokens' };
       }
 
       const { title, body, emoji } = this.getShipmentStatusMessage(status, shipment);
@@ -91,9 +102,12 @@ class PushNotificationService {
         priority: 'high',
       }));
 
-      return await this.sendPushNotifications(messages);
+      const result = await this.sendPushNotifications(messages);
+      console.log(`${logPrefix} Sent ${result.length} notifications`);
+      return { success: true, sent: result.length, tickets: result };
     } catch (error) {
-      console.error('Error sending shipment status notification:', error);
+      console.error(`${logPrefix} FAILED:`, error.message);
+      throw error;
     }
   }
 
@@ -101,12 +115,15 @@ class PushNotificationService {
    * Send notification to a single user about package status
    */
   async sendPackageStatusNotification(userId, shipment, packageStatus) {
+    const logPrefix = `[PushNotification:Package:${shipment.id}]`;
+    console.log(`${logPrefix} Sending to user ${userId}, packageStatus: ${packageStatus}`);
+
     try {
       const tokens = await this.getUserPushTokens(userId);
 
       if (tokens.length === 0) {
-        console.log(`No push tokens found for user ${userId}`);
-        return;
+        console.log(`${logPrefix} No push tokens found for user ${userId}`);
+        return { success: true, sent: 0, reason: 'no_tokens' };
       }
 
       const { title, body, emoji } = this.getPackageStatusMessage(packageStatus, shipment);
@@ -126,9 +143,12 @@ class PushNotificationService {
         priority: 'high',
       }));
 
-      return await this.sendPushNotifications(messages);
+      const result = await this.sendPushNotifications(messages);
+      console.log(`${logPrefix} Sent ${result.length} notifications`);
+      return { success: true, sent: result.length, tickets: result };
     } catch (error) {
-      console.error('Error sending package status notification:', error);
+      console.error(`${logPrefix} FAILED:`, error.message);
+      throw error;
     }
   }
 
@@ -136,11 +156,15 @@ class PushNotificationService {
    * Send driver proximity notification
    */
   async sendDriverProximityNotification(userId, shipment, estimatedMinutes) {
+    const logPrefix = `[PushNotification:DriverProximity:${shipment.id}]`;
+    console.log(`${logPrefix} Sending to user ${userId}, ETA: ${estimatedMinutes} min`);
+
     try {
       const tokens = await this.getUserPushTokens(userId);
 
       if (tokens.length === 0) {
-        return;
+        console.log(`${logPrefix} No push tokens found for user ${userId}`);
+        return { success: true, sent: 0, reason: 'no_tokens' };
       }
 
       const messages = tokens.map(token => ({
@@ -158,9 +182,12 @@ class PushNotificationService {
         priority: 'high',
       }));
 
-      return await this.sendPushNotifications(messages);
+      const result = await this.sendPushNotifications(messages);
+      console.log(`${logPrefix} Sent ${result.length} notifications`);
+      return { success: true, sent: result.length, tickets: result };
     } catch (error) {
-      console.error('Error sending driver proximity notification:', error);
+      console.error(`${logPrefix} FAILED:`, error.message);
+      throw error;
     }
   }
 
@@ -245,10 +272,26 @@ class PushNotificationService {
   }
 
   /**
-   * Get all push tokens for a user
+   * Get all push tokens for a customer
+   * Note: customer_id is from the customers table, but push_tokens uses users.id
+   * We need to resolve customer_id → users.id via the customers table
    */
-  async getUserPushTokens(userId) {
+  async getUserPushTokens(customerId) {
     try {
+      // Resolve customer_id to user_id
+      const userResult = await db.query(
+        'SELECT user_id FROM customers WHERE id = $1',
+        [customerId]
+      );
+
+      if (userResult.rows.length === 0) {
+        console.log(`[PushNotification] No customer found with id ${customerId}`);
+        return [];
+      }
+
+      const userId = userResult.rows[0].user_id;
+      console.log(`[PushNotification] Resolved customer_id ${customerId} → user_id ${userId}`);
+
       const result = await db.query(
         'SELECT token, device_type FROM push_tokens WHERE user_id = $1',
         [userId]

@@ -172,6 +172,7 @@ GET /api/users/me/shipments 🔒
     "id": 5,
     "tracking_number": "DM-20251116-A3X9F2",
     "status": "in_transit",
+    "package_status": "out_for_delivery",
     "pickup_address": "123 Main St, SF",
     "delivery_address": "456 Market St, SF",
     "order_id": 10,
@@ -203,6 +204,84 @@ GET /api/users/me/shipments/:id 🔒
 
 ---
 
+### Get Shipment History
+```http
+GET /api/users/me/shipments/:id/history 🔒
+```
+
+**Description**: Get customer-friendly shipment event history
+
+**Parameters:**
+- `id` - Shipment ID
+
+**Response:**
+```json
+{
+  "shipmentId": 5,
+  "count": 4,
+  "events": [
+    {
+      "id": 101,
+      "event_type": "shipment_created",
+      "description": "Shipment created",
+      "occurred_at": "2025-11-16T21:00:00.000Z",
+      "latitude": null,
+      "longitude": null
+    },
+    {
+      "id": 102,
+      "event_type": "driver_assigned",
+      "description": "Driver assigned to shipment",
+      "occurred_at": "2025-11-16T21:30:00.000Z",
+      "user_name": "Admin"
+    },
+    {
+      "id": 103,
+      "event_type": "status_change",
+      "description": "Status changed from assigned to in_transit",
+      "occurred_at": "2025-11-16T21:35:00.000Z"
+    }
+  ]
+}
+```
+
+**Errors:**
+- `404` - Shipment not found or does not belong to you
+
+---
+
+### Delete Shipment (Cancel Package)
+```http
+DELETE /api/users/me/shipments/:id 🛍️
+```
+
+**Description**: Delete/cancel a shipment (soft delete). Only allowed for pending (not assigned) or delivered shipments.
+
+**Parameters:**
+- `id` - Shipment ID
+
+**Response (200 OK):**
+```json
+{
+  "message": "Package deleted successfully",
+  "shipment_id": 5,
+  "tracking_number": "DM-20251116-A3X9F2",
+  "deleted_at": "2025-11-16T22:00:00.000Z"
+}
+```
+
+**Errors:**
+- `400` - Invalid shipment ID
+- `403` - Cannot delete shipment in current status (must be pending or delivered)
+- `404` - Shipment not found or does not belong to you
+- `410` - Shipment already deleted
+
+**Notes:**
+- Only shipments in `pending` or `delivered` status can be deleted
+- Cannot delete shipments that are `assigned` or `in_transit`
+
+---
+
 ### 🆕 Create New Shipment (Package)
 ```http
 POST /api/users/me/shipments 🛍️
@@ -210,11 +289,43 @@ POST /api/users/me/shipments 🛍️
 
 **Description**: Customer creates a new package for delivery
 
-**Request Body:**
+**Supports Two Formats:**
+
+**Format 1: Legacy Simple Format**
 ```json
 {
   "pickupAddress": "123 Main St, San Francisco, CA 94102",
   "deliveryAddress": "456 Market St, San Francisco, CA 94103",
+  "totalAmount": 29.99
+}
+```
+
+**Format 2: Enhanced Format with Full Details**
+```json
+{
+  "sender": {
+    "name": "John Smith",
+    "phone": "555-0100",
+    "address": "123 Main St, San Francisco, CA 94102",
+    "latitude": 37.7749,
+    "longitude": -122.4194
+  },
+  "receiver": {
+    "name": "Jane Doe",
+    "phone": "555-0200",
+    "address": "456 Market St, San Francisco, CA 94103",
+    "latitude": 37.7849,
+    "longitude": -122.4094
+  },
+  "package": {
+    "weight": 2.5,
+    "description": "Electronics",
+    "status": "in_transit",
+    "details": {
+      "fragile": true,
+      "dimensions": "30x20x15cm"
+    }
+  },
   "totalAmount": 29.99
 }
 ```
@@ -240,6 +351,96 @@ POST /api/users/me/shipments 🛍️
 - `400` - Missing required fields
 - `403` - User is not a customer (drivers cannot create packages)
 - `404` - Customer profile not found
+
+---
+
+## 📱 Push Notifications
+
+### Register Push Token
+```http
+POST /api/users/me/push-token 🔒
+```
+
+**Description**: Register a device's Expo push notification token to receive real-time notifications
+
+**Request Body:**
+```json
+{
+  "token": "ExponentPushToken[xxxxxxxxxxxxxxxxxxxxxx]"
+}
+```
+
+**Response (200 OK):**
+```json
+{
+  "message": "Push token registered successfully",
+  "token": "ExponentPushToken[xxxxxxxxxxxxxxxxxxxxxx]"
+}
+```
+
+**Errors:**
+- `400` - Invalid token format or missing token
+- `500` - Failed to register token
+
+**Notes:**
+- Tokens are automatically associated with the authenticated user
+- Duplicate tokens are updated with new timestamp
+- One user can have multiple tokens (multiple devices)
+
+---
+
+### Unregister Push Token
+```http
+DELETE /api/users/me/push-token 🔒
+```
+
+**Description**: Remove a push notification token (e.g., when user logs out)
+
+**Request Body:**
+```json
+{
+  "token": "ExponentPushToken[xxxxxxxxxxxxxxxxxxxxxx]"
+}
+```
+
+**Response (200 OK):**
+```json
+{
+  "message": "Push token unregistered successfully"
+}
+```
+
+**Errors:**
+- `400` - Missing token
+- `500` - Failed to unregister token
+
+---
+
+### Notification Events
+
+Push notifications are automatically sent for these events:
+
+**Shipment Status Changes:**
+- 📋 **Pending** → "Order Confirmed - Package created and awaiting pickup"
+- 👤 **Assigned** → "Driver Assigned - A driver has been assigned"
+- 🚚 **In Transit** → "Package In Transit - Package is on its way"
+- ✅ **Delivered** → "Delivered! - Package successfully delivered"
+
+**Package Status Changes:**
+- 🚚 **Out for Delivery** → "Out for Delivery - Package will arrive soon"
+- 📦 **In Transit** → "In Transit - Package on its way to delivery location"
+- ✅ **Delivered** → "Delivered! - Package delivered successfully"
+- ⚠️ **Exceptions** → "Delivery Exception - Issue with delivery"
+
+**Notification Payload:**
+```json
+{
+  "type": "shipment-status" | "package-status" | "driver-proximity",
+  "shipmentId": 5,
+  "trackingNumber": "DM-20251117-ABC123",
+  "status": "in_transit"
+}
+```
 
 ---
 
@@ -477,6 +678,59 @@ PATCH /api/users/me/deliveries/:id/status 🚗
 
 ---
 
+### Add Delivery Event/Note
+```http
+POST /api/users/me/deliveries/:id/events 🚗
+```
+
+**Description**: Driver adds a manual event or note to their delivery (e.g., "Package delayed due to traffic", "Arrived at pickup location")
+
+**Parameters:**
+- `id` - Shipment/Delivery ID
+
+**Request Body:**
+```json
+{
+  "eventType": "delivery_note",
+  "description": "Traffic delay on Highway 101, ETA +15 minutes",
+  "latitude": 37.7749,
+  "longitude": -122.4194
+}
+```
+
+**Response (201 Created):**
+```json
+{
+  "message": "Event logged successfully",
+  "event": {
+    "id": 456,
+    "shipment_id": 5,
+    "event_type": "delivery_note",
+    "description": "Traffic delay on Highway 101, ETA +15 minutes",
+    "user_id": 7,
+    "latitude": 37.7749,
+    "longitude": -122.4194,
+    "occurred_at": "2025-11-16T21:45:00.000Z"
+  }
+}
+```
+
+**Common Event Types:**
+- `delivery_note` - General delivery note
+- `pickup_arrival` - Driver arrived at pickup location
+- `delivery_arrival` - Driver arrived at delivery location
+- `issue` - Problem or issue encountered
+- `customer_contact` - Driver contacted customer
+
+**Errors:**
+- `400` - Missing eventType or description
+- `403` - Delivery not assigned to this driver
+- `404` - Driver profile not found
+
+**WebSocket Event**: Emits `shipment_event`
+
+---
+
 ## 📦 Shipment Endpoints
 
 ### List All Shipments
@@ -621,27 +875,96 @@ PATCH /api/shipments/:id/status
 
 ---
 
-### Get Shipment Event History
+### Update Package Status
 ```http
-GET /api/shipments/:id/events
+PATCH /api/shipments/:id/package-status
 ```
 
 **Parameters:**
 - `id` - Shipment ID
 
-**Response:** Array of status change events
+**Request Body:**
 ```json
-[
-  {
-    "id": 123,
-    "shipment_id": 5,
-    "event_type": "status_change",
-    "from_status": "assigned",
-    "to_status": "in_transit",
-    "occurred_at": "2025-11-16T21:05:00.000Z"
-  }
-]
+{
+  "packageStatus": "out_for_delivery"
+}
 ```
+
+**Valid Package Status Values:**
+- `out_for_delivery` - Package is out for final delivery
+- `in_transit` - Package is in transit
+- `delivered` - Package has been delivered
+- `exceptions` - Delivery exception occurred
+
+**Response:**
+```json
+{
+  "id": 5,
+  "tracking_number": "DM-20251116-A3X9F2",
+  "status": "in_transit",
+  "package_status": "out_for_delivery",
+  "pickup_address": "123 Main St, San Francisco, CA 94102",
+  "delivery_address": "456 Market St, San Francisco, CA 94103",
+  "updated_at": "2025-11-16T21:10:00.000Z"
+}
+```
+
+**Errors:**
+- `400` - Invalid package status value
+- `404` - Shipment not found
+- `500` - Internal server error
+
+**WebSocket Event:** Emits `package_status_updated` event
+
+---
+
+### Get Shipment Event History (Admin View)
+```http
+GET /api/shipments/:id/events?limit=100&includeLocationUpdates=false
+```
+
+**Description**: Get detailed shipment event history (admin view with all events)
+
+**Parameters:**
+- `id` - Shipment ID
+
+**Query Parameters:**
+- `limit` - Max number of events to return (default: 100)
+- `includeLocationUpdates` - Include location update events (default: false)
+
+**Response:**
+```json
+{
+  "shipmentId": 5,
+  "count": 3,
+  "events": [
+    {
+      "id": 123,
+      "shipment_id": 5,
+      "event_type": "status_change",
+      "description": "Status changed from assigned to in_transit",
+      "from_status": "assigned",
+      "to_status": "in_transit",
+      "occurred_at": "2025-11-16T21:05:00.000Z",
+      "user_id": 7,
+      "user_name": "John Driver"
+    },
+    {
+      "id": 124,
+      "shipment_id": 5,
+      "event_type": "delivery_note",
+      "description": "Arrived at pickup location",
+      "occurred_at": "2025-11-16T21:10:00.000Z",
+      "latitude": 37.7749,
+      "longitude": -122.4194
+    }
+  ]
+}
+```
+
+**Notes:**
+- For customer-friendly history, use `GET /api/users/me/shipments/:id/history` instead
+- This endpoint shows all system events including internal state changes
 
 ---
 
@@ -1210,9 +1533,20 @@ curl http://localhost:8080/api/shipments/track/DM-20251116-A3X9F2
 
 ## Shipment Status Flow
 
+### Main Shipment Status (status field)
 ```
 pending → assigned → in_transit → delivered
 ```
+
+### Package Delivery Status (package_status field - Optional)
+The `package_status` field provides more granular tracking of package delivery states:
+
+- `out_for_delivery` - Package is out with driver for final delivery
+- `in_transit` - Package is in transit between locations
+- `delivered` - Package has been successfully delivered
+- `exceptions` - Delivery exception (e.g., address issue, recipient unavailable)
+
+**Note**: The `package_status` field is optional and independent of the main `status` field.
 
 ## Driver Status Values
 

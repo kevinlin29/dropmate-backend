@@ -412,16 +412,23 @@ router.post('/me/packages/:id/claim', requireDriver, async (req, res) => {
     // Send push notification asynchronously (don't block response)
     if (claimedPackage.customer_id) {
       import('../services/pushNotificationService.js')
-        .then(({ default: pushService }) => {
-          return pushService.sendShipmentStatusNotification(
-            claimedPackage.customer_id,
-            claimedPackage,
-            claimedPackage.status
-          );
+        .then(async ({ default: pushService }) => {
+          try {
+            const result = await pushService.sendShipmentStatusNotification(
+              claimedPackage.customer_id,
+              claimedPackage,
+              claimedPackage.status
+            );
+            console.log(`[Claim:${claimedPackage.id}] Push notification result:`, result);
+          } catch (err) {
+            console.error(`[Claim:${claimedPackage.id}] Push notification FAILED:`, err.message);
+          }
         })
         .catch(err => {
-          console.error('Failed to send push notification:', err);
+          console.error(`[Claim:${claimedPackage.id}] Failed to import pushNotificationService:`, err);
         });
+    } else {
+      console.log(`[Claim:${claimedPackage.id}] No customer_id found, skipping push notification`);
     }
 
     res.json({
@@ -556,16 +563,23 @@ router.patch('/me/deliveries/:id/status', requireDriver, async (req, res) => {
     // Send push notification asynchronously (don't block response)
     if (updated.customer_id) {
       import('../services/pushNotificationService.js')
-        .then(({ default: pushService }) => {
-          return pushService.sendShipmentStatusNotification(
-            updated.customer_id,
-            updated,
-            updated.status
-          );
+        .then(async ({ default: pushService }) => {
+          try {
+            const result = await pushService.sendShipmentStatusNotification(
+              updated.customer_id,
+              updated,
+              updated.status
+            );
+            console.log(`[DeliveryStatus:${updated.id}] Push notification result:`, result);
+          } catch (err) {
+            console.error(`[DeliveryStatus:${updated.id}] Push notification FAILED:`, err.message);
+          }
         })
         .catch(err => {
-          console.error('Failed to send push notification:', err);
+          console.error(`[DeliveryStatus:${updated.id}] Failed to import pushNotificationService:`, err);
         });
+    } else {
+      console.log(`[DeliveryStatus:${updated.id}] No customer_id found, skipping push notification`);
     }
 
     res.json({

@@ -6,13 +6,8 @@ metadata:
   namespace: dropmate
   labels:
     app: core-api
-  annotations:
-    service.beta.kubernetes.io/do-loadbalancer-name: "dropmate-core-api-lb"
-    service.beta.kubernetes.io/do-loadbalancer-protocol: "http"
-    service.beta.kubernetes.io/do-loadbalancer-healthcheck-path: "/health"
-    service.beta.kubernetes.io/do-loadbalancer-healthcheck-port: "8080"
 spec:
-  type: LoadBalancer
+  type: ClusterIP
   selector:
     app: core-api
   ports:
@@ -132,10 +127,10 @@ spec:
         name: cpu
         target:
           type: Utilization
-          averageUtilization: 70
+          averageUtilization: 90
     - type: Resource
       resource:
         name: memory
         target:
           type: Utilization
-          averageUtilization: 80
+          averageUtilization: 90
