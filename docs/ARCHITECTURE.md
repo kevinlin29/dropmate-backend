@@ -240,20 +240,50 @@ DropMate is a cloud-native delivery tracking platform built with a microservices
 
 ### 6. **Nginx Ingress Controller**
 **Responsibilities**:
-- SSL/TLS termination (Let's Encrypt certificates)
+- SSL/TLS termination (Let's Encrypt certificates via cert-manager)
 - Load balancing across service replicas
 - Path-based routing to microservices
 - WebSocket connection upgrade support
 - Health check proxying
 
 **Routing Rules**:
-- `api.dropmate.com/*` → Core API Service
-- `location.dropmate.com/*` → Location Service
-- `ws.dropmate.com/*` → Notification Service
+- `api.dropmate.ca/*` → Core API Service
+- `location.dropmate.ca/*` → Location Service
+- `notify.dropmate.ca/*` → Notification Service
 
 ---
 
-### 7. **External Services**
+### 7. **Scaling Monitor Service**
+**Technology**: Node.js (Express) + Kubernetes Client
+**Responsibilities**:
+- Watch HPA (HorizontalPodAutoscaler) events in real-time
+- Detect scaling up/down events for all services
+- Collect metrics (CPU/memory utilization, pod status)
+- Send email alerts via SendGrid API
+- Deduplication to prevent alert spam
+
+**Key Features**:
+- **Real-time HPA Watching**: Monitors `core-api-hpa`, `location-service-hpa`, `notification-service-hpa`
+- **Email Notifications**: Sends detailed alerts to admin emails via SendGrid
+- **Metrics Collection**: Gathers CPU/memory metrics and pod status from Kubernetes API
+- **Deduplication**: 5-minute window to prevent duplicate alerts
+- **Auto-reconnect**: Handles Kubernetes API connection failures gracefully
+
+**Email Alert Content**:
+- Scaling event details (service name, replica changes, timestamp)
+- Resource metrics (CPU/memory utilization vs targets)
+- Pod status (running pods, health indicators, ages)
+- Quick action kubectl commands for troubleshooting
+
+**Kubernetes RBAC**:
+- ServiceAccount: `scaling-monitor-sa`
+- Permissions: `get`, `list`, `watch` on HPAs and Pods
+
+**Scaling**: Fixed 1 replica (stateless, lightweight)
+
+---
+
+### 8. **External Services**
 
 #### **Firebase Admin SDK**
 - Custom token generation for authentication
@@ -267,6 +297,15 @@ DropMate is a cloud-native delivery tracking platform built with a microservices
   - Package delivery status
   - Driver proximity alerts
   - Message notifications
+
+#### **SendGrid Email Service**
+- Email notification delivery via SendGrid Web API v3
+- Used by Scaling Monitor Service
+- Email types:
+  - Scaling up/down alerts
+  - Resource utilization warnings
+  - Pod status updates
+- Recipients: Admin emails (configurable via environment)
 
 ---
 

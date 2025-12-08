@@ -16,7 +16,10 @@ k8s/digitalocean/
 ├── 05-core-api.yaml           # Core API deployment + LoadBalancer + HPA
 ├── 06-location-service.yaml   # Location service deployment + LoadBalancer + HPA
 ├── 07-notification-service.yaml # Notification service deployment + LoadBalancer + HPA
-├── 08-ingress.yaml            # Ingress configuration (optional)
+├── 08-ingress.yaml            # Ingress configuration with nginx + cert-manager
+├── 09-cert-manager.yaml       # Certificate manager for SSL/TLS
+├── 10-scaling-monitor-rbac.yaml # RBAC for scaling monitor service
+├── 11-scaling-monitor-service.yaml # Scaling monitor service (email alerts)
 ├── deploy.sh                  # Automated deployment script
 ├── setup-secrets.sh           # Interactive secrets generator
 ├── build-and-push.sh          # Docker build and push script
@@ -38,6 +41,13 @@ k8s/digitalocean/
 │  │  + HPA       │  │  2-8 pods    │  │  2-6 pods    │      │
 │  └──────┬───────┘  └──────┬───────┘  └──────┬───────┘      │
 │         │                  │                  │               │
+│         │                  │    ┌─────────────┤               │
+│         │                  │    │ Scaling     │               │
+│         │                  │    │ Monitor     │               │
+│         │                  │    │ (8083)      │               │
+│         │                  │    │ 1 pod       │               │
+│         │                  │    └─────────────┘               │
+│         │                  │    (HPA watcher, email alerts)   │
 │         │                  │                  │               │
 │  ┌──────┴──────────────────┴──────────────────┴───────┐     │
 │  │                    Redis                             │     │
@@ -53,7 +63,8 @@ k8s/digitalocean/
                            │
                            │
                     ┌──────┴──────┐
-                    │ LoadBalancer │ (3x @ $12/mo each)
+                    │ NGINX Ingress│ (1x @ $12/mo)
+                    │ + SSL/TLS    │
                     └──────┬──────┘
                            │
                     ┌──────┴──────┐
@@ -169,9 +180,10 @@ kubectl logs -f deployment/core-api -n dropmate
 
 ### 1. Auto-Scaling (HPA)
 Each service has Horizontal Pod Autoscaling configured:
-- **Core API:** 2-10 pods based on CPU/Memory (70% threshold)
+- **Core API:** 2-10 pods based on CPU/Memory (90% threshold)
 - **Location Service:** 2-8 pods
 - **Notification Service:** 2-6 pods
+- **Scaling Monitor:** Watches HPA events and sends email alerts via SendGrid
 
 ### 2. Persistent Storage
 - **PostgreSQL:** 10GB DigitalOcean Block Storage
@@ -202,19 +214,20 @@ resources:
 
 ## 💰 Cost Estimate
 
-**DigitalOcean Monthly Costs:**
+**DigitalOcean Monthly Costs (Current Setup):**
 
 | Resource | Quantity | Unit Cost | Total |
 |----------|----------|-----------|-------|
 | Kubernetes Nodes (s-2vcpu-4gb) | 3 | $24/mo | $72 |
-| LoadBalancers | 3 | $12/mo | $36 |
+| NGINX Ingress LoadBalancer | 1 | $12/mo | $12 |
 | Block Storage | 15GB | $0.10/GB | $1.50 |
 | Container Registry | 1 | $5/mo | $5 |
-| **Total** | | | **~$114/month** |
+| SendGrid (email alerts) | 1 | $0/mo | $0 (free tier) |
+| **Total** | | | **~$90.50/month** |
 
 **Cost Optimization:**
-- Use single Ingress instead of 3 LoadBalancers: **Save $24/mo**
 - Reduce to 2 nodes for non-prod: **Save $24/mo**
+- Use smaller node sizes: **Save ~$20/mo**
 
 ## 📊 Monitoring
 
