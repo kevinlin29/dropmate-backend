@@ -2,9 +2,19 @@
 
 echo "🚀 Starting Kubernetes Dashboard..."
 echo ""
+echo "🔐 Generating new access token..."
+
+# Generate fresh token (valid for 24 hours)
+TOKEN=$(kubectl create token admin-user -n kubernetes-dashboard --duration=24h)
+
+# Save to file
+echo "$TOKEN" > dashboard-token.txt
+
+echo "✅ Token generated and saved to dashboard-token.txt"
+echo ""
 echo "📋 Access Token (valid for 24 hours):"
 echo "=================================="
-cat dashboard-token.txt
+echo "$TOKEN"
 echo ""
 echo "=================================="
 echo ""
