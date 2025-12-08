@@ -1,0 +1,25 @@
+{
+  "name": "dropmate-scaling-monitor-service",
+  "version": "1.0.0",
+  "description": "Kubernetes scaling event monitor with email notifications",
+  "type": "module",
+  "main": "src/server.js",
+  "scripts": {
+    "dev": "nodemon src/server.js",
+    "start": "node src/server.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "dotenv": "^16.3.1",
+    "@sendgrid/mail": "^7.7.0",
+    "@kubernetes/client-node": "^0.20.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.3"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "author": "DropMate Engineering Team",
+  "license": "ISC"
+}

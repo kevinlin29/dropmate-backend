@@ -1,0 +1,109 @@
+# Scaling Monitor Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: scaling-monitor-service
+  namespace: dropmate
+  labels:
+    app: scaling-monitor-service
+spec:
+  type: ClusterIP
+  selector:
+    app: scaling-monitor-service
+  ports:
+    - name: http
+      port: 80
+      targetPort: 8083
+      protocol: TCP
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: scaling-monitor-service
+  namespace: dropmate
+  labels:
+    app: scaling-monitor-service
+spec:
+  replicas: 1  # Single replica is sufficient (stateless)
+  selector:
+    matchLabels:
+      app: scaling-monitor-service
+  template:
+    metadata:
+      labels:
+        app: scaling-monitor-service
+    spec:
+      serviceAccountName: scaling-monitor-sa  # Use service account with RBAC permissions
+      imagePullSecrets:
+        - name: registry-dropmate-1763357718
+      containers:
+        - name: scaling-monitor-service
+          image: registry.digitalocean.com/dropmate-1763357718/dropmate-scaling-monitor-service:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8083
+              name: http
+          env:
+            # Service configuration
+            - name: PORT
+              value: "8083"
+            - name: NODE_ENV
+              valueFrom:
+                configMapKeyRef:
+                  name: app-config
+                  key: NODE_ENV
+
+            # K8s namespace to watch
+            - name: K8S_NAMESPACE
+              value: "dropmate"
+
+            # HPA names to watch (comma-separated)
+            - name: WATCHED_HPAS
+              value: "core-api-hpa,location-service-hpa,notification-service-hpa"
+
+            # SendGrid configuration
+            - name: SENDGRID_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: sendgrid-secret
+                  key: SENDGRID_API_KEY
+            - name: SENDGRID_SENDER_EMAIL
+              valueFrom:
+                secretKeyRef:
+                  name: sendgrid-secret
+                  key: SENDGRID_SENDER_EMAIL
+            - name: ADMIN_EMAILS
+              valueFrom:
+                secretKeyRef:
+                  name: sendgrid-secret
+                  key: ADMIN_EMAILS
+
+            # Deduplication window (minutes)
+            - name: DEDUP_WINDOW_MINUTES
+              value: "5"
+
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "100m"
+            limits:
+              memory: "256Mi"
+              cpu: "200m"
+
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8083
+            initialDelaySeconds: 60
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 5
+
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8083
+            initialDelaySeconds: 30
+            periodSeconds: 15
+            timeoutSeconds: 10
+            failureThreshold: 3
